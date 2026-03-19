@@ -1,4 +1,4 @@
-# Run Haider Run v1.0.0 - AI Gesture-Controlled Endless Runner
+# Run Haider Run v1.0.1 - AI Gesture-Controlled Endless Runner
 # Made by TeamPAK (Haider, Ismail, Kaif, Talha) | MoreProf Week 2026 | Thomas More University
 
 import pygame, os, random, threading, json
@@ -113,7 +113,7 @@ def load_scores():
 
 def save_score(name, score):
     board = load_scores()
-    # If this player already has a higher score on the board, don't change anything
+    # If this player already has a higher or equal score, don't change anything
     existing = next((e for e in board if e["name"].lower() == name.lower()), None)
     if existing and existing["score"] >= score:
         return board
@@ -132,8 +132,7 @@ def draw_leaderboard(cx, cy):
     else:
         for i, entry in enumerate(board):
             txt(F_CREDITS, f"{i+1}.  {entry['name']}  -  {entry['score']}", (60, 60, 60), cx, cy + 38 + i * 26)
-
-    # Reset button — drawn below the entries, returns its rect for click detection
+    # Reset button — wide enough to contain the text comfortably
     btn = pygame.Rect(cx - 100, cy + 310, 200, 34)
     pygame.draw.rect(SCREEN, (220, 60, 60), btn, border_radius=6)
     txt(F_CREDITS, "Reset Leaderboard", (255, 255, 255), cx, cy + 327)
@@ -141,29 +140,34 @@ def draw_leaderboard(cx, cy):
 
 # ── NAME INPUT SCREEN ─────────────────────────────────────────────────
 def name_input():
-    # Prompt the player to type their name before the game starts.
-    # Returns the entered name string (empty name becomes "Player").
     name = ""
     clock = pygame.time.Clock()
     while True:
         SCREEN.fill((255, 255, 255))
-        txt(F_TITLE,   "Enter Your Name",      (30, 30, 30),   SW // 2, 200)
-        txt(F_SUB,     "Type and press Enter", (120, 120, 120), SW // 2, 265)
-
-        # Render typed name with a blinking cursor
+        txt(F_TITLE,   "Enter Your Name",           (30, 30, 30),    SW // 2, 180)
+        txt(F_SUB,     "Type your name below",      (120, 120, 120), SW // 2, 245)
+        # Blinking cursor
         display = name + ("|" if (pygame.time.get_ticks() // 500) % 2 == 0 else " ")
-        txt(F_TITLE, display, (0, 120, 220), SW // 2, 340)
-
+        txt(F_TITLE, display, (0, 120, 220), SW // 2, 320)
+        # Gesture confirm instruction
+        g, c = gesture_state["label"], gesture_state["confidence"]
+        confirm_color = (0, 180, 0) if g == "Jump" and c > 0.90 else (160, 160, 160)
+        txt(F_SUB, "Raise your arm to confirm", confirm_color, SW // 2, 410)
         txt(F_CREDITS, CREDITS_TEXT, (160, 160, 160), SW // 2, 560)
         pygame.display.update()
         clock.tick(30)
+
+        # Confirm with gesture — turn green when detected, triggers after 0.5s hold
+        if g == "Jump" and c > 0.90 and name.strip():
+            pygame.time.delay(500)   # brief pause so it doesn't instantly start game
+            return name.strip()
 
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 pygame.quit(); return "Player"
             if e.type == pygame.KEYDOWN:
                 if e.key == pygame.K_RETURN:
-                    return name.strip() or "Player"   # fallback if nothing typed
+                    return name.strip() or "Player"   # keyboard fallback still works
                 elif e.key == pygame.K_BACKSPACE:
                     name = name[:-1]
                 elif len(name) < 16 and e.unicode.isprintable():
@@ -198,9 +202,10 @@ class Player:
                 self.running = True
                 self.vel = self.VEL
         self.step = (self.step + 1) % 10
-
         # State transitions from input
-        if inp[pygame.K_UP] and not self.jumping:
+        # rect.y >= self.Y ensures jump can only re-trigger once back on the ground
+        # — prevents holding the gesture from causing infinite floating (god mode)
+        if inp[pygame.K_UP] and not self.jumping and self.rect.y >= self.Y:
             self.running = self.ducking = False
             self.jumping = True
         elif inp[pygame.K_DOWN] and not self.jumping:
@@ -254,61 +259,59 @@ def start_screen():
     # Right column (x=820): leaderboard
     while True:
         SCREEN.fill((255, 255, 255))
-
         # Left — game info
-        txt(F_TITLE,   "RUN HAIDER RUN",                                  (30,30,30),    290,  70)
-        txt(F_SUB,     "Gesture-controlled — no keyboard needed",         (100,100,100), 290, 130)
-        SCREEN.blit(RUN_LARGE, (290 - RUN_LARGE.get_width()//2,          165))
+        txt(F_TITLE,   "RUN HAIDER RUN",                              (30,30,30),    290,  70)
+        txt(F_SUB,     "Gesture-controlled — no keyboard needed",     (100,100,100), 290, 130)
+        SCREEN.blit(RUN_LARGE, (290 - RUN_LARGE.get_width()//2,      165))
         if (pygame.time.get_ticks() // 600) % 2 == 0:
-            txt(F_SUB, "Press any key to start", (60,60,60),              290, 470)
-        txt(F_CREDITS, CREDITS_TEXT, (160,160,160),                       290, 550)
-
+            txt(F_SUB, "Raise both arms to start!", (60,60,60),        290, 470)
+        txt(F_CREDITS, CREDITS_TEXT, (160,160,160),                   290, 550)
         # Divider
         pygame.draw.line(SCREEN, (220,220,220), (580, 40), (580, 570), 1)
-
         # Right — leaderboard
         reset_btn = draw_leaderboard(820, 200)
-
         pygame.display.update()
+
+        # Trigger start on Jump gesture (raise arms) with high confidence
+        g, c = gesture_state["label"], gesture_state["confidence"]
+        if g == "Jump" and c > 0.90:
+            player_name = name_input()
+            main(player_name); return
+
         for e in pygame.event.get():
             if e.type == pygame.QUIT:  pygame.quit(); return
             if e.type == pygame.MOUSEBUTTONDOWN and reset_btn.collidepoint(e.pos):
-                json.dump([], open(SCORES_FILE, "w"))   # wipe the scores file
-            if e.type == pygame.KEYDOWN:
+                json.dump([], open(SCORES_FILE, "w"))
+            if e.type == pygame.KEYDOWN:   # keyboard fallback still works
                 player_name = name_input()
                 main(player_name); return
 
 
 def game_over(player_name):
-    board = save_score(player_name, points)
+    board    = save_score(player_name, points)
     on_board = any(e["name"] == player_name and e["score"] == points for e in board)
-
     # Left column (x=290): GAME OVER, score, dead sprite
     # Right column (x=820): leaderboard
     while True:
         SCREEN.fill((255, 255, 255))
-
         # Left — result
-        txt(F_TITLE, "GAME OVER",        (200,30,30),   290, 60)
-        txt(F_SUB,   f"Score: {points}", (30,30,30),    290, 120)
+        txt(F_TITLE, "GAME OVER",        (200,30,30),  290, 60)
+        txt(F_SUB,   f"Score: {points}", (30,30,30),   290, 120)
         if on_board:
             txt(F_SCORE, "New leaderboard entry!", (0,150,80), 290, 155)
-        SCREEN.blit(DEAD, (290 - DEAD.get_width()//2,   175))
+        SCREEN.blit(DEAD, (290 - DEAD.get_width()//2,  175))
         if (pygame.time.get_ticks() // 600) % 2 == 0:
             txt(F_SUB, "Press any key to play again", (60,60,60), 290, 530)
-        txt(F_CREDITS, CREDITS_TEXT, (160,160,160),     290, 565)
-
+        txt(F_CREDITS, CREDITS_TEXT, (160,160,160),    290, 565)
         # Divider
         pygame.draw.line(SCREEN, (220,220,220), (580, 40), (580, 570), 1)
-
         # Right — updated leaderboard
         reset_btn = draw_leaderboard(820, 200)
-
         pygame.display.update()
         for e in pygame.event.get():
             if e.type == pygame.QUIT:  pygame.quit(); return
             if e.type == pygame.MOUSEBUTTONDOWN and reset_btn.collidepoint(e.pos):
-                json.dump([], open(SCORES_FILE, "w"))   # wipe the scores file
+                json.dump([], open(SCORES_FILE, "w"))
             if e.type == pygame.KEYDOWN:
                 player_name = name_input()
                 main(player_name); return
@@ -326,7 +329,6 @@ def main(player_name="Player"):
     x_bg       = 0
     clock      = pygame.time.Clock()
 
-    # Audio state tracking
     was_jumping    = False
     last_milestone = 0
 
