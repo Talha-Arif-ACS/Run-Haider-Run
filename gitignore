@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.pyo
+scores.json
+Assets/Audio/
+.env
